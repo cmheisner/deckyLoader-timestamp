@@ -1,14 +1,12 @@
 import {
-  ButtonItem,
   definePlugin,
   PanelSection,
   PanelSectionRow,
   SliderField,
   ToggleField,
 } from "@decky/ui";
-import { FC, useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import { ClockOverlay, ClockSettings } from "./ClockOverlay";
+import React, { FC, useState } from "react";
+import { ClockSettings } from "./ClockOverlay";
 
 const STORAGE_KEY = "decky-timestamp-settings";
 
@@ -48,18 +46,63 @@ function saveSettings(s: ClockSettings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
 }
 
-// The QAM panel content
+const POSITION_CSS: Record<ClockSettings["position"], string> = {
+  "top-left":     "top:8px;left:8px;",
+  "top-right":    "top:8px;right:8px;",
+  "bottom-left":  "bottom:8px;left:8px;",
+  "bottom-right": "bottom:8px;right:8px;",
+};
+
+function applyOverlay(el: HTMLDivElement, s: ClockSettings) {
+  el.style.cssText = `
+    position:fixed;
+    z-index:99999;
+    color:${s.color};
+    font-size:${s.fontSize}px;
+    font-family:monospace;
+    text-align:center;
+    text-shadow:1px 1px 3px rgba(0,0,0,0.8);
+    pointer-events:none;
+    user-select:none;
+    line-height:1.3;
+    display:${s.visible ? "block" : "none"};
+    ${POSITION_CSS[s.position]}
+  `;
+}
+
+function formatTime(d: Date, use24h: boolean): string {
+  return d.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: !use24h,
+  });
+}
+
+function formatDate(d: Date): string {
+  return d.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+// QAM panel content — uses local state so sliders/toggles re-render properly
 const Content: FC<{
-  settings: ClockSettings;
-  onChange: (s: ClockSettings) => void;
-}> = ({ settings, onChange }) => {
+  initialSettings: ClockSettings;
+  onOverlayUpdate: (s: ClockSettings) => void;
+}> = ({ initialSettings, onOverlayUpdate }) => {
+  const [settings, setSettings] = useState<ClockSettings>(initialSettings);
+
   const update = (patch: Partial<ClockSettings>) => {
     const next = { ...settings, ...patch };
-    onChange(next);
+    setSettings(next);
+    saveSettings(next);
+    onOverlayUpdate(next);
   };
 
-  const colorIdx = COLORS.indexOf(settings.color);
-  const posIdx = POSITIONS.indexOf(settings.position);
+  const colorIdx = Math.max(0, COLORS.indexOf(settings.color));
+  const posIdx = Math.max(1, POSITIONS.indexOf(settings.position));
 
   return (
     <PanelSection>
@@ -101,7 +144,7 @@ const Content: FC<{
       <PanelSectionRow>
         <SliderField
           label={`Color: ${COLOR_LABELS[settings.color] ?? settings.color}`}
-          value={colorIdx >= 0 ? colorIdx : 0}
+          value={colorIdx}
           min={0}
           max={COLORS.length - 1}
           step={1}
@@ -112,7 +155,7 @@ const Content: FC<{
       <PanelSectionRow>
         <SliderField
           label={`Position: ${settings.position}`}
-          value={posIdx >= 0 ? posIdx : 1}
+          value={posIdx}
           min={0}
           max={POSITIONS.length - 1}
           step={1}
@@ -124,34 +167,62 @@ const Content: FC<{
 };
 
 export default definePlugin(() => {
-  let settings = loadSettings();
-  let overlayRoot: HTMLDivElement | null = null;
-  let reactRoot: any = null;
+  const initialSettings = loadSettings();
+  let overlayEl: HTMLDivElement | null = null;
+  let timeEl: HTMLDivElement | null = null;
+  let dateEl: HTMLDivElement | null = null;
+  let ticker: ReturnType<typeof setInterval> | null = null;
+  let currentSettings = initialSettings;
 
-  function mountOverlay() {
-    overlayRoot = document.createElement("div");
-    overlayRoot.id = "decky-timestamp-overlay";
-    document.body.appendChild(overlayRoot);
-
-    // Use React 18 createRoot if available, else fallback
-    const { createRoot } = require("react-dom/client");
-    reactRoot = createRoot(overlayRoot);
-    renderOverlay();
+  // Try to find the main Steam UI document (not the panel iframe)
+  function getTargetDoc(): Document {
+    try {
+      if (window.parent && window.parent.document && window.parent.document !== document) {
+        return window.parent.document;
+      }
+    } catch {}
+    return document;
   }
 
-  function renderOverlay() {
-    if (!reactRoot) return;
-    const { createElement } = require("react");
-    reactRoot.render(createElement(ClockOverlay, { settings }));
+  function mountOverlay() {
+    const doc = getTargetDoc();
+    if (doc.getElementById("decky-timestamp-overlay")) return;
+
+    overlayEl = doc.createElement("div");
+    overlayEl.id = "decky-timestamp-overlay";
+
+    dateEl = doc.createElement("div");
+    timeEl = doc.createElement("div");
+    overlayEl.appendChild(dateEl);
+    overlayEl.appendChild(timeEl);
+
+    doc.body.appendChild(overlayEl);
+    applyOverlay(overlayEl, currentSettings);
+    tick();
+
+    ticker = setInterval(tick, 1000);
+  }
+
+  function tick() {
+    if (!timeEl || !dateEl) return;
+    const now = new Date();
+    timeEl.textContent = formatTime(now, currentSettings.use24h);
+    dateEl.textContent = currentSettings.showDate ? formatDate(now) : "";
+    dateEl.style.display = currentSettings.showDate ? "block" : "none";
+  }
+
+  function updateOverlay(s: ClockSettings) {
+    currentSettings = s;
+    if (overlayEl) applyOverlay(overlayEl, s);
+    tick();
   }
 
   function unmountOverlay() {
-    if (reactRoot) {
-      reactRoot.unmount();
-      reactRoot = null;
-    }
-    overlayRoot?.remove();
-    overlayRoot = null;
+    if (ticker) { clearInterval(ticker); ticker = null; }
+    overlayEl?.remove();
+    overlayEl = null;
+    timeEl = null;
+    dateEl = null;
   }
 
   mountOverlay();
@@ -160,12 +231,8 @@ export default definePlugin(() => {
     title: <div>Timestamp</div>,
     content: (
       <Content
-        settings={settings}
-        onChange={(s) => {
-          settings = s;
-          saveSettings(s);
-          renderOverlay();
-        }}
+        initialSettings={initialSettings}
+        onOverlayUpdate={updateOverlay}
       />
     ),
     icon: <span>🕐</span>,

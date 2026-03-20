@@ -1,4 +1,4 @@
-import { CSSProperties, FC, useEffect, useState } from "react";
+import React, { CSSProperties, FC, useEffect, useState } from "react";
 
 export interface ClockSettings {
   visible: boolean;

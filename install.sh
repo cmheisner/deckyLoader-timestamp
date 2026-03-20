@@ -6,9 +6,13 @@ PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 DECKY_PLUGINS="$HOME/homebrew/plugins"
 INSTALL_DIR="$DECKY_PLUGINS/$PLUGIN_NAME"
 
-# Load nvm
+# Load nvm (check both standard and VSCode Flatpak locations)
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  source "$NVM_DIR/nvm.sh"
+elif [ -s "$HOME/.var/app/com.visualstudio.code/config/nvm/nvm.sh" ]; then
+  source "$HOME/.var/app/com.visualstudio.code/config/nvm/nvm.sh"
+fi
 
 echo "==> Building $PLUGIN_NAME..."
 cd "$PLUGIN_DIR"
