@@ -5,7 +5,8 @@ import {
   SliderField,
   ToggleField,
 } from "@decky/ui";
-import React, { FC, useState } from "react";
+import { routerHook } from "@decky/api";
+import React, { FC, useState, useEffect, useRef } from "react";
 import { ClockSettings } from "./ClockOverlay";
 
 const STORAGE_KEY = "decky-timestamp-settings";
@@ -27,13 +28,20 @@ const POSITIONS: ClockSettings["position"][] = [
   "bottom-right",
 ];
 
+const POSITION_STYLES: Record<ClockSettings["position"], React.CSSProperties> = {
+  "top-left":     { top: 8, left: 8 },
+  "top-right":    { top: 8, right: 8 },
+  "bottom-left":  { bottom: 8, left: 8 },
+  "bottom-right": { bottom: 8, right: 8 },
+};
+
 function loadSettings(): ClockSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
   return {
-    visible: true,
+    visible: false,
     use24h: false,
     showDate: true,
     fontSize: 16,
@@ -46,63 +54,86 @@ function saveSettings(s: ClockSettings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
 }
 
-const POSITION_CSS: Record<ClockSettings["position"], string> = {
-  "top-left":     "top:8px;left:8px;",
-  "top-right":    "top:8px;right:8px;",
-  "bottom-left":  "bottom:8px;left:8px;",
-  "bottom-right": "bottom:8px;right:8px;",
-};
+// Shared mutable ref updated by the QAM panel, read by the global overlay
+let globalSettings = loadSettings();
+const listeners: Array<(s: ClockSettings) => void> = [];
 
-function applyOverlay(el: HTMLDivElement, s: ClockSettings) {
-  el.style.cssText = `
-    position:fixed;
-    z-index:99999;
-    color:${s.color};
-    font-size:${s.fontSize}px;
-    font-family:monospace;
-    text-align:center;
-    text-shadow:1px 1px 3px rgba(0,0,0,0.8);
-    pointer-events:none;
-    user-select:none;
-    line-height:1.3;
-    display:${s.visible ? "block" : "none"};
-    ${POSITION_CSS[s.position]}
-  `;
+function notifyListeners(s: ClockSettings) {
+  listeners.forEach((fn) => fn(s));
 }
 
-function formatTime(d: Date, use24h: boolean): string {
-  return d.toLocaleTimeString([], {
+// Persistent overlay — rendered via addGlobalComponent
+const ClockOverlayGlobal: FC = () => {
+  const [settings, setSettings] = useState<ClockSettings>(globalSettings);
+  const [now, setNow] = useState(new Date());
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const listener = (s: ClockSettings) => setSettings(s);
+    listeners.push(listener);
+    return () => {
+      const i = listeners.indexOf(listener);
+      if (i >= 0) listeners.splice(i, 1);
+    };
+  }, []);
+
+  useEffect(() => {
+    tickRef.current = setInterval(() => setNow(new Date()), 1000);
+    return () => { if (tickRef.current) clearInterval(tickRef.current); };
+  }, []);
+
+  if (!settings.visible) return null;
+
+  const timeStr = now.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: !use24h,
+    hour12: !settings.use24h,
   });
-}
 
-function formatDate(d: Date): string {
-  return d.toLocaleDateString([], {
+  const dateStr = now.toLocaleDateString([], {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
-}
 
-// QAM panel content — uses local state so sliders/toggles re-render properly
+  return (
+    <div style={{
+      position: "fixed",
+      zIndex: 9999,
+      color: settings.color,
+      fontSize: settings.fontSize,
+      fontFamily: "monospace",
+      textAlign: "center",
+      textShadow: "1px 1px 3px rgba(0,0,0,0.8)",
+      pointerEvents: "none",
+      userSelect: "none",
+      lineHeight: 1.3,
+      ...POSITION_STYLES[settings.position],
+    }}>
+      {settings.showDate && <div>{dateStr}</div>}
+      <div>{timeStr}</div>
+    </div>
+  );
+};
+
+// QAM panel content
 const Content: FC<{
   initialSettings: ClockSettings;
-  onOverlayUpdate: (s: ClockSettings) => void;
-}> = ({ initialSettings, onOverlayUpdate }) => {
+  onUpdate: (s: ClockSettings) => void;
+}> = ({ initialSettings, onUpdate }) => {
   const [settings, setSettings] = useState<ClockSettings>(initialSettings);
 
   const update = (patch: Partial<ClockSettings>) => {
     const next = { ...settings, ...patch };
     setSettings(next);
     saveSettings(next);
-    onOverlayUpdate(next);
+    globalSettings = next;
+    onUpdate(next);
   };
 
   const colorIdx = Math.max(0, COLORS.indexOf(settings.color));
-  const posIdx = Math.max(1, POSITIONS.indexOf(settings.position));
+  const posIdx = Math.max(0, POSITIONS.indexOf(settings.position));
 
   return (
     <PanelSection>
@@ -168,76 +199,21 @@ const Content: FC<{
 
 export default definePlugin(() => {
   const initialSettings = loadSettings();
-  let overlayEl: HTMLDivElement | null = null;
-  let timeEl: HTMLDivElement | null = null;
-  let dateEl: HTMLDivElement | null = null;
-  let ticker: ReturnType<typeof setInterval> | null = null;
-  let currentSettings = initialSettings;
+  globalSettings = initialSettings;
 
-  // Try to find the main Steam UI document (not the panel iframe)
-  function getTargetDoc(): Document {
-    try {
-      if (window.parent && window.parent.document && window.parent.document !== document) {
-        return window.parent.document;
-      }
-    } catch {}
-    return document;
-  }
-
-  function mountOverlay() {
-    const doc = getTargetDoc();
-    if (doc.getElementById("decky-timestamp-overlay")) return;
-
-    overlayEl = doc.createElement("div");
-    overlayEl.id = "decky-timestamp-overlay";
-
-    dateEl = doc.createElement("div");
-    timeEl = doc.createElement("div");
-    overlayEl.appendChild(dateEl);
-    overlayEl.appendChild(timeEl);
-
-    doc.body.appendChild(overlayEl);
-    applyOverlay(overlayEl, currentSettings);
-    tick();
-
-    ticker = setInterval(tick, 1000);
-  }
-
-  function tick() {
-    if (!timeEl || !dateEl) return;
-    const now = new Date();
-    timeEl.textContent = formatTime(now, currentSettings.use24h);
-    dateEl.textContent = currentSettings.showDate ? formatDate(now) : "";
-    dateEl.style.display = currentSettings.showDate ? "block" : "none";
-  }
-
-  function updateOverlay(s: ClockSettings) {
-    currentSettings = s;
-    if (overlayEl) applyOverlay(overlayEl, s);
-    tick();
-  }
-
-  function unmountOverlay() {
-    if (ticker) { clearInterval(ticker); ticker = null; }
-    overlayEl?.remove();
-    overlayEl = null;
-    timeEl = null;
-    dateEl = null;
-  }
-
-  mountOverlay();
+  routerHook.addGlobalComponent("DeckyTimestamp", ClockOverlayGlobal);
 
   return {
     title: <div>Timestamp</div>,
     content: (
       <Content
         initialSettings={initialSettings}
-        onOverlayUpdate={updateOverlay}
+        onUpdate={notifyListeners}
       />
     ),
     icon: <span>🕐</span>,
     onDismount() {
-      unmountOverlay();
+      routerHook.removeGlobalComponent("DeckyTimestamp");
     },
   };
 });
