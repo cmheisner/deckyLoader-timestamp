@@ -1,10 +1,13 @@
 {
   "name": "Timestamp",
   "version": "1.0.0",
-  "author": "deck",
+  "author": "cmheisner",
   "flags": [],
+  "license": "CC0-1.0",
   "publish": {
     "tags": ["utility"],
-    "description": "Displays a configurable clock and date overlay on your Steam Deck screen."
+    "description": "Displays a persistent clock and date overlay on your Steam Deck screen. Toggle visibility, choose 12/24-hour format, show/hide date, adjust font size, color, and corner position.",
+    "image": "https://raw.githubusercontent.com/cmheisner/deckyLoader-timestamp/main/assets/logo.png"
   }
 }
+

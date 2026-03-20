@@ -1,5 +1,6 @@
 import {
   definePlugin,
+  findModuleChild,
   PanelSection,
   PanelSectionRow,
   SliderField,
@@ -7,6 +8,30 @@ import {
 } from "@decky/ui";
 import { routerHook } from "@decky/api";
 import React, { FC, useState, useEffect, useRef } from "react";
+
+enum UIComposition {
+  Hidden = 0,
+  Notification = 1,
+  Overlay = 2,
+  Opaque = 3,
+  OverlayKeyboard = 4,
+}
+
+const useUIComposition: ((mode: UIComposition) => void) | undefined =
+  findModuleChild((m) => {
+    if (typeof m !== "object") return undefined;
+    for (const prop in m) {
+      if (
+        typeof m[prop] === "function" &&
+        m[prop].toString().includes("AddMinimumCompositionStateRequest") &&
+        m[prop].toString().includes("ChangeMinimumCompositionStateRequest") &&
+        m[prop].toString().includes("RemoveMinimumCompositionStateRequest") &&
+        !m[prop].toString().includes("m_mapCompositionStateRequests")
+      ) {
+        return m[prop];
+      }
+    }
+  });
 import { ClockSettings } from "./ClockOverlay";
 
 const STORAGE_KEY = "decky-timestamp-settings";
@@ -64,6 +89,7 @@ function notifyListeners(s: ClockSettings) {
 
 // Persistent overlay — rendered via addGlobalComponent
 const ClockOverlayGlobal: FC = () => {
+  useUIComposition?.(UIComposition.Notification);
   const [settings, setSettings] = useState<ClockSettings>(globalSettings);
   const [now, setNow] = useState(new Date());
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -87,7 +113,6 @@ const ClockOverlayGlobal: FC = () => {
   const timeStr = now.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     hour12: !settings.use24h,
   });
 
@@ -97,6 +122,8 @@ const ClockOverlayGlobal: FC = () => {
     day: "numeric",
   });
 
+  const label = settings.showDate ? `${timeStr}  ${dateStr}` : timeStr;
+
   return (
     <div style={{
       position: "fixed",
@@ -104,25 +131,22 @@ const ClockOverlayGlobal: FC = () => {
       color: settings.color,
       fontSize: settings.fontSize,
       fontFamily: "monospace",
-      textAlign: "center",
       textShadow: "1px 1px 3px rgba(0,0,0,0.8)",
       pointerEvents: "none",
       userSelect: "none",
-      lineHeight: 1.3,
+      whiteSpace: "nowrap",
       ...POSITION_STYLES[settings.position],
     }}>
-      {settings.showDate && <div>{dateStr}</div>}
-      <div>{timeStr}</div>
+      {label}
     </div>
   );
 };
 
 // QAM panel content
 const Content: FC<{
-  initialSettings: ClockSettings;
   onUpdate: (s: ClockSettings) => void;
-}> = ({ initialSettings, onUpdate }) => {
-  const [settings, setSettings] = useState<ClockSettings>(initialSettings);
+}> = ({ onUpdate }) => {
+  const [settings, setSettings] = useState<ClockSettings>(() => globalSettings);
 
   const update = (patch: Partial<ClockSettings>) => {
     const next = { ...settings, ...patch };
@@ -207,7 +231,6 @@ export default definePlugin(() => {
     title: <div>Timestamp</div>,
     content: (
       <Content
-        initialSettings={initialSettings}
         onUpdate={notifyListeners}
       />
     ),
