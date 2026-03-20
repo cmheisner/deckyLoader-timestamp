@@ -1,0 +1,10 @@
+{
+  "name": "Timestamp",
+  "version": "1.0.0",
+  "author": "deck",
+  "flags": [],
+  "publish": {
+    "tags": ["utility"],
+    "description": "Displays a configurable clock and date overlay on your Steam Deck screen."
+  }
+}

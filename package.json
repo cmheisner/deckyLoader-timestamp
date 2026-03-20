@@ -1,0 +1,16 @@
+{
+  "name": "decky-timestamp",
+  "version": "1.0.0",
+  "description": "Clock overlay plugin for Decky Loader",
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "rollup -c -w"
+  },
+  "devDependencies": {
+    "@decky/rollup": "*",
+    "@decky/ui": "*",
+    "@decky/api": "*",
+    "@types/react": "^18.0.0",
+    "typescript": "^5.0.0"
+  }
+}
