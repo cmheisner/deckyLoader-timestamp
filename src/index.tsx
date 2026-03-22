@@ -1,5 +1,6 @@
 import {
   definePlugin,
+  findModuleChild,
   PanelSection,
   PanelSectionRow,
   SliderField,
@@ -7,6 +8,26 @@ import {
 } from "@decky/ui";
 import { routerHook } from "@decky/api";
 import React, { FC, useState, useEffect, useRef } from "react";
+
+// UIComposition.Notification keeps the overlay visible during gameplay without
+// grabbing input (unlike Overlay mode 2, which caused full input blocking).
+enum UIComposition { Notification = 1 }
+
+const useUIComposition: ((mode: UIComposition) => void) | undefined =
+  findModuleChild((m: Record<string, unknown>) => {
+    if (typeof m !== "object" || m === null) return undefined;
+    for (const prop in m) {
+      if (
+        typeof m[prop] === "function" &&
+        (m[prop] as Function).toString().includes("AddMinimumCompositionStateRequest") &&
+        (m[prop] as Function).toString().includes("ChangeMinimumCompositionStateRequest") &&
+        (m[prop] as Function).toString().includes("RemoveMinimumCompositionStateRequest") &&
+        !(m[prop] as Function).toString().includes("m_mapCompositionStateRequests")
+      ) {
+        return m[prop] as (mode: UIComposition) => void;
+      }
+    }
+  });
 import { ClockSettings } from "./ClockOverlay";
 
 const STORAGE_KEY = "decky-timestamp-settings";
@@ -64,6 +85,7 @@ function notifyListeners(s: ClockSettings) {
 
 // Persistent overlay — rendered via addGlobalComponent
 const ClockOverlayGlobal: FC = () => {
+  useUIComposition?.(UIComposition.Notification);
   const [settings, setSettings] = useState<ClockSettings>(globalSettings);
   const [now, setNow] = useState(new Date());
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
